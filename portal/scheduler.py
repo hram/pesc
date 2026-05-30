@@ -1,21 +1,35 @@
 import logging
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from portal.db import get_auto_submit_accounts, add_log_entry
 from portal.infrastructure.config import settings
+from portal.schedule import should_submit
 from src.pesc.client import PescClient
 
 log = logging.getLogger(__name__)
 
+MOSCOW_TZ = timezone.utc  # APScheduler уже запускает задачу по МСК
 
-async def run_auto_submit() -> None:
+
+async def run_auto_submit(*, force: bool = False) -> None:
+    import zoneinfo
+    moscow_today = datetime.now(tz=zoneinfo.ZoneInfo("Europe/Moscow")).date()
+    allowed, reason = should_submit(moscow_today)
+    if not allowed:
+        if force:
+            log.info("auto_submit: force=true, игнорируем ограничение (%s)", reason)
+        else:
+            log.info("auto_submit: пропуск — %s", reason)
+            return
+
     account_ids = get_auto_submit_accounts()
     if not account_ids:
-        log.info("auto_submit: no accounts enabled, skipping")
+        log.info("auto_submit: нет счетов с включённой автоподачей")
         return
 
-    log.info("auto_submit: starting for accounts %s", account_ids)
+    log.info("auto_submit: запуск для счетов %s (%s)", account_ids, reason)
 
     async with PescClient(
         totp_secret=settings.pesc_totp_secret,

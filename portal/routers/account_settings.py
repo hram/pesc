@@ -31,6 +31,6 @@ async def update_settings(account_id: int, body: AccountSettingsPatch) -> Accoun
 
 
 @router.post("/trigger", status_code=204)
-async def trigger_scheduler() -> None:
-    """Запустить автоподачу вручную (для проверки планировщика)."""
-    await run_auto_submit()
+async def trigger_scheduler(force: bool = False) -> None:
+    """Запустить автоподачу вручную. force=true игнорирует окно подачи."""
+    await run_auto_submit(force=force)
