@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Журнал автоподачи</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f6f9;
+      color: #1a1a2e;
+      padding: 24px 16px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+
+    h1 { font-size: 1.4rem; font-weight: 600; }
+
+    a { color: #4a6cf7; text-decoration: none; font-size: .85rem; }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      overflow: hidden;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .88rem;
+    }
+
+    thead {
+      background: #1a1a2e;
+      color: #fff;
+    }
+
+    th {
+      padding: 11px 16px;
+      text-align: left;
+      font-weight: 500;
+      letter-spacing: .03em;
+      font-size: .8rem;
+    }
+
+    td {
+      padding: 11px 16px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafbff; }
+
+    .ok  { color: #38a169; font-weight: 500; }
+    .err { color: #e53e3e; font-weight: 500; }
+
+    .error-text {
+      font-size: .8rem;
+      color: #e53e3e;
+      margin-top: 3px;
+    }
+
+    .empty {
+      padding: 40px;
+      text-align: center;
+      color: #999;
+      font-size: .9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Журнал автоподачи</h1>
+    <a href="/">← Назад</a>
+  </div>
+
+  <div class="card">
+    {% if entries %}
+    <table>
+      <thead>
+        <tr>
+          <th>Время</th>
+          <th>Лицевой счёт</th>
+          <th>Результат</th>
+          <th>Показаний</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in entries %}
+        <tr>
+          <td>{{ e.ran_at | datetimeformat }}</td>
+          <td>{{ e.account_id }}</td>
+          <td>
+            {% if e.success %}
+              <span class="ok">✓ Успешно</span>
+            {% else %}
+              <span class="err">✗ Ошибка</span>
+              {% if e.error %}
+              <div class="error-text">{{ e.error }}</div>
+              {% endif %}
+            {% endif %}
+          </td>
+          <td>{{ e.readings_count if e.success else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Журнал пуст — автоподача ещё не запускалась</div>
+    {% endif %}
+  </div>
+</body>
+</html>

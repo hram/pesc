@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Показания счётчиков</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f6f9;
+      color: #1a1a2e;
+      padding: 24px 16px;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      margin-bottom: 24px;
+      color: #1a1a2e;
+    }
+
+    .account {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+
+    .account-header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 12px 20px;
+      font-size: .85rem;
+      font-weight: 500;
+      letter-spacing: .03em;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .toggle-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .8rem;
+      font-weight: 400;
+      cursor: pointer;
+      opacity: .85;
+    }
+
+    .toggle-label input[type="checkbox"] { display: none; }
+
+    .toggle-track {
+      width: 36px;
+      height: 20px;
+      background: #555;
+      border-radius: 10px;
+      position: relative;
+      transition: background .2s;
+      flex-shrink: 0;
+    }
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      background: #fff;
+      border-radius: 50%;
+      top: 3px;
+      left: 3px;
+      transition: left .2s;
+    }
+    input:checked + .toggle-track { background: #4a6cf7; }
+    input:checked + .toggle-track::after { left: 19px; }
+
+    .meter {
+      border-bottom: 1px solid #f0f0f0;
+      padding: 16px 20px;
+    }
+    .meter:last-of-type { border-bottom: none; }
+
+    .meter-name {
+      font-size: .95rem;
+      font-weight: 500;
+      margin-bottom: 10px;
+    }
+
+    .scale-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    .scale-label {
+      font-size: .82rem;
+      color: #666;
+      min-width: 160px;
+    }
+
+    .scale-prev {
+      font-size: .82rem;
+      color: #999;
+      min-width: 120px;
+    }
+
+    input[type="number"] {
+      border: 1.5px solid #dde2ea;
+      border-radius: 7px;
+      padding: 6px 10px;
+      font-size: .9rem;
+      width: 140px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    input[type="number"]:focus { border-color: #4a6cf7; }
+
+    .unit {
+      font-size: .8rem;
+      color: #888;
+    }
+
+    .submit-row {
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      border-top: 1px solid #f0f0f0;
+    }
+
+    button {
+      background: #4a6cf7;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 22px;
+      font-size: .9rem;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background .15s;
+    }
+    button:hover { background: #3a5ce6; }
+    button:disabled { background: #a0aec0; cursor: not-allowed; }
+
+    .status {
+      font-size: .85rem;
+      display: none;
+    }
+    .status.ok  { color: #38a169; display: inline; }
+    .status.err { color: #e53e3e; display: inline; }
+  </style>
+</head>
+<body>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
+    <h1 style="margin:0">Показания счётчиков</h1>
+    <a href="/log" style="font-size:.85rem;color:#4a6cf7;text-decoration:none;">Журнал автоподачи →</a>
+  </div>
+
+  {% for account in accounts %}
+  <div class="account">
+    <div class="account-header">
+      <span>Лицевой счёт {{ account.id }}</span>
+      <label class="toggle-label">
+        Подавать автоматически
+        <input
+          type="checkbox"
+          {% if account.auto_submit %}checked{% endif %}
+          onchange="toggleAutoSubmit({{ account.id }}, this.checked)"
+        >
+        <span class="toggle-track"></span>
+      </label>
+    </div>
+
+    <form data-account="{{ account.id }}" onsubmit="submitForm(event, this)">
+      {% for meter in account.meters %}
+      <div class="meter">
+        <div class="meter-name">{{ meter.name or meter.registration }}</div>
+        {% for ind in meter.indications %}
+        <div class="scale-row">
+          <span class="scale-label">{{ ind.scale_name or "Показание" }}</span>
+          <span class="scale-prev">было: {{ ind.previous_reading if ind.previous_reading is not none else "—" }}</span>
+          <input
+            type="number"
+            step="any"
+            name="scale"
+            data-registration="{{ meter.registration }}"
+            data-scale-id="{{ ind.meter_scale_id }}"
+            value="{{ ind.previous_reading if ind.previous_reading is not none else '' }}"
+            required
+          >
+          <span class="unit">{{ ind.unit or "" }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="meter" style="color:#999;font-size:.9rem;">Счётчики не найдены</div>
+      {% endfor %}
+
+      <div class="submit-row">
+        <button type="submit">Подать показания</button>
+        <span class="status" id="status-{{ account.id }}"></span>
+      </div>
+    </form>
+  </div>
+  {% endfor %}
+
+  <script>
+    async function toggleAutoSubmit(accountId, enabled) {
+      await fetch(`/api/accounts/${accountId}/settings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auto_submit: enabled }),
+      });
+    }
+
+    async function submitForm(event, form) {
+      event.preventDefault();
+      const accountId = Number(form.dataset.account);
+      const statusEl = document.getElementById('status-' + accountId);
+      const btn = form.querySelector('button');
+
+      // Group inputs by registration
+      const byReg = {};
+      for (const input of form.querySelectorAll('input[name="scale"]')) {
+        const reg = input.dataset.registration;
+        if (!byReg[reg]) byReg[reg] = [];
+        byReg[reg].push({ scale_id: Number(input.dataset.scaleId), value: parseFloat(input.value) });
+      }
+
+      const body = Object.entries(byReg).map(([registration, scales]) => ({
+        account_id: accountId,
+        registration,
+        scales,
+      }));
+
+      btn.disabled = true;
+      statusEl.className = 'status';
+      statusEl.textContent = 'Отправка…';
+      statusEl.style.display = 'inline';
+
+      try {
+        const res = await fetch('/api/meters/submit-values', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          throw new Error(err);
+        }
+        statusEl.className = 'status ok';
+        statusEl.textContent = '✓ Показания приняты';
+      } catch (e) {
+        statusEl.className = 'status err';
+        statusEl.textContent = '✗ ' + (e.message || 'Ошибка');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
