@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from src.pesc.client import PescClient
 from portal.infrastructure.config import settings
 from portal.db import upsert_account, get_auto_submit, get_log
+from portal.routers.meters import _get_auth
 
 from datetime import datetime, timezone
 
@@ -35,12 +36,10 @@ def _expand(name: str | None) -> str | None:
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
     async with _client() as c:
-        cookie = await c.fetch_session_cookie()
-        bearer = await c.login(cookie, settings.pesc_login, settings.pesc_password)
-        account_ids = await c.fetch_all_account_ids(cookie, bearer)
+        bearer, account_ids = await _get_auth(c)
         accounts = []
         for account_id in account_ids:
-            meters = await c.fetch_meters(cookie, bearer, account_id)
+            meters = await c.fetch_meters(bearer, account_id)
             upsert_account(account_id)
             for m in meters:
                 m.name = _expand(m.name)

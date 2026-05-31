@@ -10,12 +10,15 @@ import httpx
 from .models import AccountInfo, IndicationScale, Meter, MeterReading
 from .totp import generate_totp
 
+class PescAuthError(RuntimeError):
+    """Server returned 401/403 — token expired or invalid."""
+
+
 BASE = "https://ikus.pesc.ru"
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0 Safari/537.36"
 )
-COOKIE_NAME = "session-cookie"
 CUSTOMER = "ikus-spb"
 VERIFY_DELAY_S = 1.5
 INTEGER_INCREMENT = 1
@@ -23,18 +26,6 @@ DEFAULT_DECIMALS = 3
 
 
 class PescClient:
-    """
-    Low-level pesc.ru API client.
-
-    Use as an async context manager:
-        async with PescClient(totp_secret=..., proxy_url=...) as client:
-            cookie = await client.fetch_session_cookie()
-            bearer = await client.login(cookie, login, password)
-            ...
-
-    Or call the high-level run() which does the full auth+submit flow.
-    """
-
     def __init__(
         self,
         *,
@@ -57,24 +48,12 @@ class PescClient:
 
     # ── Auth ──────────────────────────────────────────────────────────────────
 
-    async def fetch_session_cookie(self) -> str:
-        """Ping the existence endpoint to receive a session cookie."""
-        res = await self._http.get(
-            f"{BASE}/api/v6/users/manual/existence",
-            headers={"user-agent": UA, "accept": "application/json, text/plain, */*", "customer": CUSTOMER},
-        )
-        _raise(res, "GET /v6/users/manual/existence")
-        cookie = _extract_cookie(res, COOKIE_NAME)
-        if cookie is None:
-            raise RuntimeError(f"Set-Cookie missing '{COOKIE_NAME}' after GET existence")
-        return cookie
-
-    async def login(self, cookie: str, username: str, password: str) -> str:
+    async def login(self, username: str, password: str) -> str:
         """Authenticate and return a Bearer token. Handles TOTP 2FA automatically."""
         res = await self._http.post(
             f"{BASE}/api/v8/users/auth",
             headers={
-                **self._headers(cookie),
+                **self._headers(),
                 "content-type": "application/json",
                 "withtotp": "true",
                 "captcha": "none",
@@ -96,10 +75,8 @@ class PescClient:
                     "Only TOTP is supported; enable TOTP in account settings."
                 )
             if not self._totp_secret:
-                raise RuntimeError(
-                    "2FA required on pesc.ru but totp_secret is not configured."
-                )
-            return await self._solve_totp(cookie, tx_id)
+                raise RuntimeError("2FA required on pesc.ru but totp_secret is not configured.")
+            return await self._solve_totp(tx_id)
 
         _raise(res, "POST /v8/users/auth")
         auth: str | None = _load(text).get("auth")
@@ -107,15 +84,14 @@ class PescClient:
             raise RuntimeError('POST /v8/users/auth: response missing "auth" token')
         return auth
 
-    async def _solve_totp(self, cookie: str, transaction_id: str) -> str:
+    async def _solve_totp(self, transaction_id: str) -> str:
         import time
-
         assert self._totp_secret is not None
         code = generate_totp(self._totp_secret, int(time.time() * 1000))
         path = f"/api/v1/dfa/{transaction_id}/totp/verify"
         res = await self._http.post(
             f"{BASE}{path}",
-            headers={**self._headers(cookie), "content-type": "application/json"},
+            headers={**self._headers(), "content-type": "application/json"},
             content=_dump({"code": code}),
         )
         _raise(res, f"POST {path}")
@@ -126,13 +102,12 @@ class PescClient:
 
     # ── Account ───────────────────────────────────────────────────────────────
 
-    async def fetch_first_account_id(self, cookie: str, bearer: str) -> int:
-        ids = await self.fetch_all_account_ids(cookie, bearer)
+    async def fetch_first_account_id(self, bearer: str) -> int:
+        ids = await self.fetch_all_account_ids(bearer)
         return ids[0]
 
-    async def fetch_all_account_ids(self, cookie: str, bearer: str, *, skip_archived: bool = True) -> list[int]:
-        """Return all account IDs, optionally skipping groups named 'Архив'."""
-        groups: list[dict[str, Any]] = await self._get("/api/v6/accounts/groups", cookie, bearer)
+    async def fetch_all_account_ids(self, bearer: str, *, skip_archived: bool = True) -> list[int]:
+        groups: list[dict[str, Any]] = await self._get("/api/v6/accounts/groups", bearer)
         ids: list[int] = []
         for g in groups:
             if skip_archived and "архив" in (g.get("name") or "").lower():
@@ -142,12 +117,10 @@ class PescClient:
             raise RuntimeError("No accounts found in any group on pesc.ru")
         return ids
 
-    async def fetch_account_info(
-        self, cookie: str, bearer: str, account_id: int
-    ) -> AccountInfo | None:
+    async def fetch_account_info(self, bearer: str, account_id: int) -> AccountInfo | None:
         path = f"/api/v7/accounts/{account_id}/payments/at/current/amount/discretion"
         try:
-            items: list[dict[str, Any]] = await self._get(path, cookie, bearer)
+            items: list[dict[str, Any]] = await self._get(path, bearer)
         except Exception:
             return None
         if not isinstance(items, list):
@@ -167,15 +140,14 @@ class PescClient:
 
     # ── Meters ────────────────────────────────────────────────────────────────
 
-    async def fetch_meters(self, cookie: str, bearer: str, account_id: int) -> list[Meter]:
+    async def fetch_meters(self, bearer: str, account_id: int) -> list[Meter]:
         raw: list[dict[str, Any]] = await self._get(
-            f"/api/v6/accounts/{account_id}/meters/info", cookie, bearer
+            f"/api/v6/accounts/{account_id}/meters/info", bearer
         )
         return [_parse_meter(m) for m in raw]
 
     async def submit_reading(
         self,
-        cookie: str,
         bearer: str,
         account_id: int,
         registration: str,
@@ -184,7 +156,7 @@ class PescClient:
         path = f"/api/v8/accounts/{account_id}/meters/{registration}/reading"
         res = await self._http.post(
             f"{BASE}{path}",
-            headers={**self._headers(cookie, bearer), "content-type": "application/json"},
+            headers={**self._headers(bearer), "content-type": "application/json"},
             content=_dump(payload),
         )
         _raise(res, f"POST {path}")
@@ -198,47 +170,40 @@ class PescClient:
         *,
         last_value_for: Callable[[str], float | None] | None = None,
     ) -> tuple[AccountInfo | None, list[MeterReading]]:
-        """Full flow for the first account. See run_for_account() for details."""
-        cookie = await self.fetch_session_cookie()
-        bearer = await self.login(cookie, username, password)
-        account_id = await self.fetch_first_account_id(cookie, bearer)
-        return await self.run_for_account(cookie, bearer, account_id, last_value_for=last_value_for)
+        bearer = await self.login(username, password)
+        account_id = await self.fetch_first_account_id(bearer)
+        return await self.run_for_account(bearer, account_id)
 
     async def run_for_account(
         self,
-        cookie: str,
         bearer: str,
         account_id: int,
     ) -> tuple[AccountInfo | None, list[MeterReading]]:
         """Fetch meters for account_id, submit the same values as received, verify."""
-        info = await self.fetch_account_info(cookie, bearer, account_id)
-        meters = await self.fetch_meters(cookie, bearer, account_id)
+        info = await self.fetch_account_info(bearer, account_id)
+        meters = await self.fetch_meters(bearer, account_id)
 
         submitted: list[MeterReading] = []
 
         for meter in meters:
             if not meter.indications:
                 continue
-
             payload: list[dict[str, Any]] = []
             for ind in meter.indications:
                 key = f"{meter.registration}:{ind.meter_scale_id}"
                 if ind.previous_reading is None:
                     raise RuntimeError(f"Meter {key}: no previous reading on portal, cannot submit")
-                value = ind.previous_reading
-
-                payload.append({"scaleId": ind.meter_scale_id, "value": value})
+                payload.append({"scaleId": ind.meter_scale_id, "value": ind.previous_reading})
                 submitted.append(MeterReading(
                     meter=key,
                     kind=ind.scale_name or meter.name or "unknown",
-                    value=value,
+                    value=ind.previous_reading,
                 ))
-
-            await self.submit_reading(cookie, bearer, account_id, meter.registration, payload)
+            await self.submit_reading(bearer, account_id, meter.registration, payload)
 
         if submitted:
             await asyncio.sleep(VERIFY_DELAY_S)
-            after = await self.fetch_meters(cookie, bearer, account_id)
+            after = await self.fetch_meters(bearer, account_id)
             for reading in submitted:
                 reg, scale_str = reading.meter.split(":", 1)
                 scale_id = int(scale_str)
@@ -257,9 +222,8 @@ class PescClient:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _headers(self, cookie: str, bearer: str | None = None) -> dict[str, str]:
+    def _headers(self, bearer: str | None = None) -> dict[str, str]:
         h: dict[str, str] = {
-            "cookie": f"{COOKIE_NAME}={cookie}",
             "user-agent": UA,
             "accept": "application/json, text/plain, */*",
             "customer": CUSTOMER,
@@ -268,8 +232,8 @@ class PescClient:
             h["authorization"] = f"Bearer {bearer}"
         return h
 
-    async def _get(self, path: str, cookie: str, bearer: str) -> Any:
-        res = await self._http.get(f"{BASE}{path}", headers=self._headers(cookie, bearer))
+    async def _get(self, path: str, bearer: str) -> Any:
+        res = await self._http.get(f"{BASE}{path}", headers=self._headers(bearer))
         _raise(res, f"GET {path}")
         return _load(res.text)
 
@@ -277,19 +241,10 @@ class PescClient:
 # ── Module-level helpers ──────────────────────────────────────────────────────
 
 def _raise(res: httpx.Response, label: str) -> None:
+    if res.status_code in (401, 403):
+        raise PescAuthError(f"{label} → HTTP {res.status_code}")
     if not res.is_success:
         raise RuntimeError(f"{label} → HTTP {res.status_code}: {res.text[:200]}")
-
-
-def _extract_cookie(res: httpx.Response, name: str) -> str | None:
-    for header_val in res.headers.get_list("set-cookie"):
-        for part in header_val.split(";"):
-            part = part.strip()
-            if "=" in part:
-                k, v = part.split("=", 1)
-                if k.strip() == name:
-                    return v.strip()
-    return None
 
 
 def _dump(obj: Any) -> bytes:
