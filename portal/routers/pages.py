@@ -51,13 +51,13 @@ async def index(request: Request) -> HTMLResponse:
                 "auto_submit": get_auto_submit(account_id),
             })
 
-    return templates.TemplateResponse("index.html", {"request": request, "accounts": accounts})
+    return templates.TemplateResponse(request, "index.html", {"request": request, "accounts": accounts})
 
 
 @router.get("/log", response_class=HTMLResponse)
 async def log_page(request: Request) -> HTMLResponse:
     entries = get_log()
-    return templates.TemplateResponse("log.html", {"request": request, "entries": entries})
+    return templates.TemplateResponse(request, "log.html", {"request": request, "entries": entries})
 
 
 def _client() -> PescClient:
