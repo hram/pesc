@@ -38,3 +38,8 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(meters_router)
 app.include_router(account_settings_router)
 app.include_router(pages_router)
+
+
+@app.get("/healthz")
+def healthz() -> dict[str, str]:
+    return {"status": "ok"}
